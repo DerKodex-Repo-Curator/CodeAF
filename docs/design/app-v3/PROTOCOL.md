@@ -302,8 +302,9 @@ result or an event, `?` marks a field that may be absent.
 | `render.cancel` | `{agent, id}` | `{outcome, render}` |
 | `render.get` | `{agent, id}` | `{render}` |
 | `render.list` | `{agent, cursor, limit}` | `{renders, next, incomplete}` |
-| `rules.list` | `{}` | `{rules}` |
-| `rules.remove` | `{id}` | `{}` |
+| `rules.list` | `{}` | `{rules}` with text, origin, uses and last_used; last used first |
+| `rules.remove` | `{id}` | `{}`; Undo is available for 5 seconds |
+| `rules.restore` | `{id}` | `{}`; restores a just-removed rule and its metadata |
 | `search.all` | `{limit_per_group, query}` | `{groups}` |
 | `services.get` | `{id}` | `{process}` |
 | `services.list` | `{agent}` | `{processes}` |
@@ -1342,8 +1343,9 @@ naming it, and refuses a field it does not know.
 
 | method | params | result |
 |---|---|---|
-| `rules.list` | – | `{rules: [{id, kind: "tool"\|"bash", tool?, match?, action: "allow"\|"prompt"\|"deny"}]}` tool rules A–Z, then command patterns in match order |
+| `rules.list` | – | `{rules: [{id, text, kind: "tool"\|"bash", tool?, match?, action: "allow"\|"prompt"\|"deny", origin: {agent?, place?, at?}, uses, last_used?}]}` last used first; ties keep tool rules A–Z then command match order |
 | `rules.remove` | `{id}` | `{}` (`tool:<name>` or `bash:<pattern>`); not_found for a rule nobody wrote |
+| `rules.restore` | `{id}` | `{}`; five-second Undo, not_found after expiry, conflict on replacement |
 | `memory.list` | `{limit?: ≤500, default 200}` | `{memories: [{id, title?, text, owner, project?, origin?}]}` newest first; engine error "memory is off" |
 | `memory.forget` | `{id}` | `{}` |
 | `spend.export` | `{from: "YYYY-MM-DD", to: "YYYY-MM-DD"}` | `{path}` a CSV under `<home>/app/exports/` (at, day, conversation, model, role, seat, calls, tokens in/out, usd), both days included |
@@ -2987,7 +2989,7 @@ The existing receipt entry kind adds optional `link: {label, target}` and
 `link: {label:"Settings › Permissions", target:"settings:permissions"}`.
 A later call allowed by an explicit saved rule adds a new receipt:
 `Allowed automatically · <call> · you always allow <scope>` and
-`why:"Matches your rule <scope> in Settings › Permissions"`.
+`why` beginning `Matches your rule <scope> in Settings › Permissions`, followed by the use count and known origin (agent, folder label and date).
 Both receipts are kept in the conversation's app sidecar and restored by
 `agents.entries` at their call's position, including the settings link and
 explanation that each originally carried.
@@ -3000,3 +3002,45 @@ the call. Equal lengths keep settings order. Absent with no such rule, and for
 non-bash calls or other kinds of ask. This explains an ask without changing
 approval: the desktop can show `Waiting on you: <call> · outside <outside>, so it asks`
 with code spans around the call and rule.
+
+
+## Saved permission rule metadata and five-second Undo
+
+`rules.list {}` returns `{rules: [{id, text, kind, tool?, match?, action,
+origin: {agent?, place?, at?}, uses, last_used?}]}`. IDs stay `tool:<name>` or
+`bash:<pattern>`. Text is built from the actual stored permission (for example,
+`Always allow go test*`), not a model summary. `at` and `last_used` are RFC3339
+timestamps. Unknown origin is `{}`, unknown last use is omitted, and uses is
+zero for an old rule without metadata. Rows are sorted by last use descending;
+unknowns follow used rules. Ties retain tool names A–Z then command match order.
+Listing does not change the policy's match order. Existing tool/match/action
+fields and existing prompt/deny rows remain available.
+
+`rules.remove {id}` still answers `{}`. `rules.restore {id}` answers `{}` only
+within five seconds after this backend removed that rule. It restores its
+previous match priority and retained origin/count/date. After expiry, a backend
+restart, or a second restore, it returns `not_found`; a replacement under the
+same id returns `conflict` and is left alone. Undo is process-local, not a trash
+history. Removing or restoring a rule refreshes open local/hosted conversation
+gates without changing their posture; calls already admitted keep their answer.
+The host wire adds `RefreshApprovals` (no params/result) for this refresh.
+
+An automatic allow receipt also carries optional
+`rule: {id, text, origin: {agent?, place?, at?}, uses, scope}`. The snapshot includes
+this automatic use. `scope` is `every agent`: rules remain machine-wide, across
+folders. The entry text stays
+`Allowed automatically · <call> · you always allow <scope>`.
+The Why popover can use these fields and remove exactly `rule.id`. These fields
+survive `agents.entries` reload alongside `why`; defaults, guardian approvals,
+critical-command floors and the manual answer creating a rule are not uses.
+
+App and terminal Always save origin through the same config functions, using
+the conversation name, folder basename and answer time. Metadata is separate:
+`<profile>/rule-metadata.json` maps rule IDs to `{origin, uses, last_used?}`;
+`config.json` retains its text rows for older readers. Old rules gain counts on
+use without inventing an origin. Removed rules' metadata remains in the sidecar
+for Undo. Usage deltas merge under a cross-process lock and atomic replacement,
+with a one-second batch timer and explicit flush at session settlement/close.
+An abrupt process kill may lose the pending one-second batch. Failed writes
+retain that batch for retry; they never rewrite malformed metadata as empty.
+No repository-scoped permissions are added.
