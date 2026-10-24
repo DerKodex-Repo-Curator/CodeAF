@@ -21,7 +21,7 @@
 # pairing time to live stay at the contract defaults). `LEASE_POLICY` is the amended law the clients
 # implement. Observability stays off: the relay keeps no request log, as its README states.
 name = "caf-fabric"
-main = "src/worker.js"
+main = "src/raft-worker.js"
 compatibility_date = "2026-09-01"
 workers_dev = false
 preview_urls = false
@@ -73,3 +73,15 @@ new_sqlite_classes = ["LinkGate", "LinkRequest"]
 [vars]
 LEASE_POLICY = "amended"
 BASE_PATH = "/fabric"
+
+# Preserve v1/v2 namespace IDs while adding the independent anchor stores.
+[[durable_objects.bindings]]
+name = "RAFT_MEMBERS"
+class_name = "RaftMemberDO"
+
+[[migrations]]
+tag = "v3-raft-members"
+new_sqlite_classes = ["RaftMemberDO"]
+
+[build]
+command = "sh ../../scripts/raft-hosted-build.sh"
