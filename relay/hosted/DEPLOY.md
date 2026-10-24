@@ -239,3 +239,46 @@ namespace, and never apply a migration with `deleted_classes` to roll back code.
 Those objects hold people's data. Rolling back below the global-budget version
 also removes its admission/storage protection; choose a compatible version or
 retain the current brake implementation while fixing the fault.
+
+## Raft upgrade: v3-raft-members (staging first)
+
+The exact new migration tag is **`v3-raft-members`**. It appends
+`new_sqlite_classes = ["RaftMemberDO"]` after the existing `v1` and `v2` tags in
+wrangler.toml, staging.toml and production.toml. All three select
+`src/raft-worker.js`, run `scripts/raft-hosted-build.sh` from their configured
+build command and bind `RAFT_MEMBERS`. Keep `IDENTITY` and every existing class
+and migration unchanged: their namespace IDs locate the original source and
+pairing/blob state. Fresh deployments apply v1, v2 and v3-raft-members in order;
+existing deployments append only the unapplied tag. No renamed/deleted class,
+namespace replacement, data copy between staging and production or account
+operation is needed in the local rehearsal.
+
+An authenticated first use allocates one durable UUID, ordered A/B/C IDs and
+protocol keys in the source object. It freezes/drains the old writer, inventories
+original JSON through Go, stages the identical stream into three separately
+addressed members, completes their snapshots and passes a fresh quorum read
+before publishing `raft-owned`. A large inventory advances at most 64 rows per
+request; HTTP 503 with Retry-After asks the client to retry the same namespace.
+Interrupted stages resume their existing UUID/keys/cursor. The original source
+rows, rotation, vault, frame hints and fences stay preserved; R2 objects do not
+move. Once ownership is published, missing/corrupt/unclaimed stores are excluded
+and never reimported under old voter IDs. Fewer than two actual survivors refuses
+coordination. Restore surviving storage; never roll back to a legacy writer.
+
+The public Worker still routes identity ingress to its source object for
+signature/body admission, blob indexing, quota and sockets. That object is now a
+coordinator: directory changes, authority checks, rotation and blob authorization
+use the three members. Socket auto-responses supply advisory presence; old
+clients keep normal heartbeats and receive no socket-vouch promise. A retired
+source whose old storage contains only a root hash waits for its next
+authenticated use to supply the public root before migration/erasure can resume.
+Explicit retirement erases all member copies and their snapshots through a
+retained, retryable erasure journal; a missing member delays completion.
+
+Rehearse the actual production config locally, then use the account-only steps
+above to deploy **staging first**. Require the full hosted suite, mixed
+native/workerd journeys, public two-home Go journey, source migration cuts and
+final bundle/memory/CPU evidence before production. Three hosted objects share
+Cloudflare's failure domain and relay path. A rollback must retain this gate and
+Raft routing: a pre-cutover Worker can read the backup but cannot safely serve as
+the writer. Do not deploy from this packet; P18 owns the integrated release.
