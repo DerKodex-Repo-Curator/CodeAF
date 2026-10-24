@@ -31,3 +31,19 @@ test('every other path outside /fabric is a 404', async () => {
   }
   assert.equal((await fetchAt('/p/k7m2q9xd', 'POST')).status, 404);
 });
+
+// H1/R30 preserve deployed namespaces while appending the same actual reactor
+// entry, build and anchor binding for fresh installs and v2 upgrades.
+test('H1 R30 every deployment uses the Raft entry and append-only v3-raft-members migration', () => {
+  for (const name of ['wrangler.toml','staging.toml','production.toml']) {
+    const text=readFileSync(new URL('../'+name,import.meta.url),'utf8');
+    assert.match(text,/^main = "src\/raft-worker\.js"$/m,name);
+    assert.match(text,/name = "RAFT_MEMBERS"\s+class_name = "RaftMemberDO"/,name);
+    assert.match(text,/\[build\]\s+command = "sh \.\.\/\.\.\/scripts\/raft-hosted-build\.sh"/,name);
+    const tags=[...text.matchAll(/^tag = "([^"]+)"/gm)].map(m=>m[1]);
+    assert.deepEqual(tags,['v1','v2','v3-raft-members'],name);
+    assert.match(text,/tag = "v3-raft-members"\s+new_sqlite_classes = \["RaftMemberDO"\]/,name);
+    assert.doesNotMatch(text,/deleted_classes|renamed_classes/,name);
+    assert.match(text,/name = "IDENTITY"\s+class_name = "IdentityDO"/,name);
+  }
+});
